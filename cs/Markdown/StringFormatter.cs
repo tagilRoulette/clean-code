@@ -11,7 +11,6 @@ public class StringFormatter
     public StringFormatter(
         //Dictionary<string, string> pairReplacements,
         //Dictionary<string, string> singleReplacements,
-        string text,
         Dictionary<string, TokenType> tokenTypes,
         char escapeSymbol = '\\')
     {
@@ -22,37 +21,61 @@ public class StringFormatter
         _typesToTokenStrings = new(tokenTypes.ToDictionary(kvp => kvp.Value, kvp => kvp.Key));
     }
 
-    public Token Tokenize(string text)
+    public Token Tokenize(Token currentToken)
     {
-        Token currentToken = new Token(text, []);
-        Stack<TokenType> openTokens = new();
-        Stack<int> openTokenIndexes = new();
+        var text = currentToken.RawText;
+        bool isOutOfTokenContext = true;
+        //Stack<Token> openTokens = new();
+        //Stack<int> openTokenIndexes = new();
+
+        TokenType pairToken = default;
+        int pairIndex = default;
+
+        int basicTextStartIndex = 0, basicTextLength = 0;
 
         for (int symbolIndex = 0; symbolIndex < text.Length; symbolIndex++)
         {
-            if (GetTokenType(symbolIndex, text) is not TokenType tokenType) continue;
-
-            //if (openTokens.Count == 0)
-            //{
-            //    currentToken.EmbeddedTokens.Add(new BasicTextToken(text));
-            //}
-
-            if (openTokens.TryPeek(out var topTokenType)
-                && topTokenType == tokenType)
+            if (GetTokenType(symbolIndex, text) is not TokenType tokenType)
             {
-                openTokens.Pop();
-                currentToken.EmbeddedTokens.Add(new(openTokenIndexes.Pop(), tokenType));
+                if (isOutOfTokenContext) basicTextLength++;
+                else if (char.IsSeparator(text[symbolIndex])) isOutOfTokenContext = true;
+
+                continue;
             }
-            else
+            
+            if (basicTextLength > 0)
             {
-                openTokens.Push(tokenType);
-                openTokenIndexes.Push(symbolIndex);
+                Token basicTextToken =
+                    new(currentToken.RawText.Substring(basicTextStartIndex, basicTextLength), [], TokenType.Basic);
+                currentToken.EmbeddedTokens.Add(basicTextToken);
+                basicTextLength = 0;
             }
-            // чтобы не перескочить один символ, а перейти на него уже в for (... symbolIndex++)
+
+            bool hasNoBoldWithinItalics = !(tokenType == TokenType.Bold && currentToken.TokenType == TokenType.Italics);
+            int tokenStringLength = _typesToTokenStrings[tokenType].Length;
+            if (!isOutOfTokenContext 
+                && pairToken == tokenType
+                && hasNoBoldWithinItalics)
+            {
+                Token newToken = new(text[(pairIndex + tokenStringLength)..symbolIndex], [], tokenType);
+                currentToken.EmbeddedTokens.Add(Tokenize(newToken));
+                isOutOfTokenContext = true;
+                basicTextStartIndex = symbolIndex + tokenStringLength;
+            }
+            else if (isOutOfTokenContext)
+            {
+                pairToken = tokenType;
+                pairIndex = symbolIndex;
+                isOutOfTokenContext = false;
+            }
             symbolIndex += tokenStringLength - 1;
         }
+        if (isOutOfTokenContext && basicTextLength > 0)// && pairToken != default)
+            currentToken.EmbeddedTokens.Add(
+                new(currentToken.RawText.Substring(basicTextStartIndex, basicTextLength), [], TokenType.Basic));
         return currentToken;
     }
+
 
     private TokenType? GetTokenType(int symbolIndex, string text)
     {

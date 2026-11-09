@@ -1,4 +1,5 @@
-﻿using FluentAssertions;
+﻿using System.Diagnostics.Metrics;
+using FluentAssertions;
 
 namespace Markdown.Tests;
 
@@ -9,41 +10,73 @@ public class Tests
     {
     }
 
-    public static IEnumerable<(string, Dictionary<string, TokenType>, List<Token>)> Source_ShouldTokenizeItalicsCorrectly()
+    public static IEnumerable<(string, Dictionary<string, TokenType>, Token)> Source_ShouldTokenizeItalicsAndBoldCorrectly()
     {
-        yield return ("Hello, _V_", new() { { "_", TokenType.Italics } }, [new(7, 1, TokenType.Italics)]);
-    }
-
-    public static IEnumerable<(string, Dictionary<string, TokenType>, List<Token>)> Source_ShouldTokenizeItalicsAndBoldCorrectly()
-    {
+        var rawText = "Hello, _V_!";
         yield return (
-            "Hello, __Mister _V_!__",
+            rawText, 
+            new()
+            {
+                { "_", TokenType.Italics } 
+            },
+            new(rawText, 
+            [
+                new("Hello, ", [], TokenType.Basic),
+                new("V", [], TokenType.Italics),
+                new("!", [], TokenType.Basic)
+            ], 
+            TokenType.Basic
+            ));
+        
+        rawText = "Hello, __Mister _V_!__";
+        yield return (
+            rawText,
             new()
             {
                 { "_", TokenType.Italics },
                 { "__", TokenType.Bold },
             },
-            [
-                new(16, 1, TokenType.Italics),
-                new(8, 10, TokenType.Bold)
-            ]);
+            new
+            (
+                rawText,
+                [
+                    new("Mister _V_!", [new("V", [], TokenType.Italics)], TokenType.Bold)
+                ],
+                TokenType.Basic
+            ));
+        
+        rawText = "Hello, _Mister __V__!_";
+        yield return (
+            rawText,
+            new()
+            {
+                { "_", TokenType.Italics },
+                { "__", TokenType.Bold },
+            },
+            new
+            (
+                rawText,
+                [new("Mister __V__!", [new("__V__", [], TokenType.Basic)], TokenType.Italics)],
+                TokenType.Basic
+            ));
     }
 
-    [TestCaseSource(nameof(Source_ShouldTokenizeItalicsCorrectly))]
+
     [TestCaseSource(nameof(Source_ShouldTokenizeItalicsAndBoldCorrectly))]
+    //[TestCaseSource(nameof(Source_ShouldTokenizeItalicsAndBoldCorrectly))]
     public void ShouldTokenizeItalicsCorrectly(
         (string text,
         Dictionary<string, TokenType> tokenTypes,
-        List<Token> expected) input)
+        Token expected) input)
     {
         var formatter = new StringFormatter(
-            input.text,
             input.tokenTypes);
 
-        formatter.Tokenize().Should().BeEquivalentTo(input.expected);
+        var token = formatter.Tokenize(new(input.text, [], TokenType.Basic));
+        token.Should().BeEquivalentTo(input.expected);
     }
 
-    //[Test]
+    //[Test]t
     //public void ShouldTokenizeItalicsAndBoldCorrectly()
     //{
     //    var formatter = new StringFormatter(

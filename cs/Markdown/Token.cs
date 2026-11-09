@@ -5,10 +5,12 @@ public class Token : IToken
 
     public string RawText { get; }
 
-    public Token(string rawText, IList<Token> embeddedTokens)
+    public TokenType TokenType { get; }
+
+    public Token(string rawText, IList<Token> embeddedTokens, TokenType tokenType)
     {
         EmbeddedTokens = embeddedTokens;
         RawText = rawText;
+        TokenType = tokenType;
     }
-
 }
