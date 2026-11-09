@@ -1,6 +1,6 @@
 ﻿namespace Markdown;
 
-public class Md : StringFormatter
+public class Md
 {
     public readonly string Text;
     private readonly StringFormatter _stringFormatter;
@@ -17,6 +17,6 @@ public class Md : StringFormatter
     // Будет использовать StringFormatter
     public string Render()
     {
-
+        throw new NotImplementedException();
     }
 }
