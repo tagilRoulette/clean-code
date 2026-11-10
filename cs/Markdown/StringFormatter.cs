@@ -7,6 +7,7 @@ public class StringFormatter
     public readonly Dictionary<string, TokenType> TokenTypes;
     private readonly Dictionary<TokenType, string> _typesToTokenStrings;
     public readonly char EscapeSymbol;
+    private readonly Stack<Token> _openTokens = new();
 
     public StringFormatter(
         //Dictionary<string, string> pairReplacements,
@@ -21,61 +22,86 @@ public class StringFormatter
         _typesToTokenStrings = new(tokenTypes.ToDictionary(kvp => kvp.Value, kvp => kvp.Key));
     }
 
-    public Token Tokenize(Token currentToken)
+    public Token Tokenize(string text)
     {
-        var text = currentToken.RawText;
-        bool isOutOfTokenContext = true;
-        //Stack<Token> openTokens = new();
-        //Stack<int> openTokenIndexes = new();
+        Token currentToken = new(TokenType.Main, []);
+        int basicTextStartIndex = 0, symbolIndex = 0;
 
-        TokenType pairToken = default;
-        int pairIndex = default;
-
-        int basicTextStartIndex = 0, basicTextLength = 0;
-
-        for (int symbolIndex = 0; symbolIndex < text.Length; symbolIndex++)
+        for (; symbolIndex < text.Length; symbolIndex++)
         {
-            if (GetTokenType(symbolIndex, text) is not TokenType tokenType)
-            {
-                if (isOutOfTokenContext) basicTextLength++;
-                else if (char.IsSeparator(text[symbolIndex])) isOutOfTokenContext = true;
-
+            if (GetTokenType(symbolIndex, text) is not TokenType tokenType
+                || (symbolIndex > 0 && text[symbolIndex - 1] == EscapeSymbol))
                 continue;
-            }
-            
-            if (basicTextLength > 0)
+
+            if (symbolIndex != basicTextStartIndex)
             {
-                Token basicTextToken =
-                    new(currentToken.RawText.Substring(basicTextStartIndex, basicTextLength), [], TokenType.Basic);
-                currentToken.EmbeddedTokens.Add(basicTextToken);
-                basicTextLength = 0;
+                string tokenText = RemoveEscapeSymbols(text[basicTextStartIndex..symbolIndex]);
+                currentToken.EmbedText(tokenText);
             }
 
-            bool hasNoBoldWithinItalics = !(tokenType == TokenType.Bold && currentToken.TokenType == TokenType.Italics);
-            int tokenStringLength = _typesToTokenStrings[tokenType].Length;
-            if (!isOutOfTokenContext 
-                && pairToken == tokenType
-                && hasNoBoldWithinItalics)
+            var tokenString = _typesToTokenStrings[tokenType];
+            bool hasNoBoldWithinItalics = !(tokenType == TokenType.Bold && currentToken.Type == TokenType.Italics);
+            bool tokenizationRules = hasNoBoldWithinItalics;
+            // TODO: Переписать с ProcessToken
+            if (currentToken.Type == tokenType // Закрываем
+                && tokenizationRules)
             {
-                Token newToken = new(text[(pairIndex + tokenStringLength)..symbolIndex], [], tokenType);
-                currentToken.EmbeddedTokens.Add(Tokenize(newToken));
-                isOutOfTokenContext = true;
-                basicTextStartIndex = symbolIndex + tokenStringLength;
+                if (char.IsSeparator(text[symbolIndex - 1]))
+                    continue;
+                var currentTokenText = text[basicTextStartIndex..symbolIndex];
+                currentToken = CloseTokenAndGetParent(currentTokenText, currentToken);
             }
-            else if (isOutOfTokenContext)
+            else if (currentToken.Type != tokenType // Открываем
+                && tokenizationRules)
             {
-                pairToken = tokenType;
-                pairIndex = symbolIndex;
-                isOutOfTokenContext = false;
+                if (symbolIndex + 1 < text.Length && char.IsSeparator(text[symbolIndex + 1]))
+                {
+                    currentToken.EmbeddedTokens.RemoveAt(currentToken.EmbeddedTokens.Count - 1); // когда может сломать все?
+                    continue;
+                }
+
+                _openTokens.Push(currentToken);
+                currentToken = new(tokenType, []);
             }
-            symbolIndex += tokenStringLength - 1;
+
+            basicTextStartIndex = symbolIndex + tokenString.Length;
+            symbolIndex += tokenString.Length - 1;
         }
-        if (isOutOfTokenContext && basicTextLength > 0)// && pairToken != default)
-            currentToken.EmbeddedTokens.Add(
-                new(currentToken.RawText.Substring(basicTextStartIndex, basicTextLength), [], TokenType.Basic));
+        if (_openTokens.Count == 0 && symbolIndex != basicTextStartIndex)
+        {
+            string tokenText = RemoveEscapeSymbols(text[basicTextStartIndex..symbolIndex]);
+            currentToken.EmbedText(tokenText);
+        }
+
         return currentToken;
     }
 
+    private Token CloseTokenAndGetParent(string tokenText, Token token)
+    {
+        var tokenSymbol = _typesToTokenStrings[token.Type];
+        Token previouslyOpenedToken = _openTokens.Pop();
+        // Если нет ни одной буквы, то делаем токен обычным
+        if (tokenText.All(char.IsDigit))
+        {
+            token.Type = TokenType.Basic;
+            previouslyOpenedToken.EmbedText(tokenSymbol);
+            previouslyOpenedToken.EmbeddedTokens.Add(token);
+            previouslyOpenedToken.EmbedText(tokenSymbol);
+        }
+        else
+            previouslyOpenedToken.EmbeddedTokens.Add(token);
+
+        return previouslyOpenedToken;
+    }
+
+    private string RemoveEscapeSymbols(string text)
+    {
+        const char placeholder = '\u0001'; // SOH в нормальном тексте не встречается
+        return text
+            .Replace(new string(EscapeSymbol, 2), placeholder.ToString())
+            .Replace(EscapeSymbol.ToString(), string.Empty)
+            .Replace(placeholder.ToString(), EscapeSymbol.ToString());
+    }
 
     private TokenType? GetTokenType(int symbolIndex, string text)
     {
