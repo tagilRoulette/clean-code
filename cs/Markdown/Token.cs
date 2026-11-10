@@ -1,16 +1,20 @@
 ﻿namespace Markdown;
-public class Token : IToken
+public class Token
 {
-    public IList<Token> EmbeddedTokens { get; }
+    public readonly IList<Token>? EmbeddedTokens;
 
-    public string RawText { get; }
+    public TokenType Type;
 
-    public TokenType TokenType { get; }
-
-    public Token(string rawText, IList<Token> embeddedTokens, TokenType tokenType)
+    public Token(TokenType tokenType, IList<Token>? embeddedTokens)
     {
         EmbeddedTokens = embeddedTokens;
-        RawText = rawText;
-        TokenType = tokenType;
+        Type = tokenType;
+    }
+
+    public void EmbedText(string text)
+    {
+        if (Type == TokenType.Basic)
+            throw new InvalidOperationException("Can't embed Text Token into Text Token.");
+        EmbeddedTokens.Add(new BasicTextToken(text));
     }
 }

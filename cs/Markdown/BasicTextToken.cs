@@ -1,12 +1,11 @@
-﻿
-namespace Markdown;
-internal class BasicTextToken : IToken
+﻿namespace Markdown;
+internal class BasicTextToken : Token
 {
-    public string RawText { get; }
+    public readonly string Text;
 
-
-    public BasicTextToken(string rawText)
+    public BasicTextToken(string text)
+        : base(tokenType: TokenType.Basic, embeddedTokens: null)
     {
-        RawText = rawText;
+        Text = text;
     }
 }
