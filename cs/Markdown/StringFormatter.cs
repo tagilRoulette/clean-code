@@ -2,96 +2,137 @@
 
 public class StringFormatter
 {
-    //public readonly Dictionary<string, string> PairReplacements;
-    //public readonly Dictionary<string, string> SingleReplacements;
     public readonly Dictionary<string, TokenType> TokenTypes;
     private readonly Dictionary<TokenType, string> _typesToTokenStrings;
     public readonly char EscapeSymbol;
+    public readonly string Text;
     private readonly Stack<Token> _openTokens = new();
+    private Token _currentToken = new(TokenType.Main, [], isInWord: false);
+    private int _textStartIndex = 0;
 
     public StringFormatter(
-        //Dictionary<string, string> pairReplacements,
-        //Dictionary<string, string> singleReplacements,
+        string text,
         Dictionary<string, TokenType> tokenTypes,
         char escapeSymbol = '\\')
     {
-        //PairReplacements = pairReplacements;
-        //SingleReplacements = singleReplacements;
         EscapeSymbol = escapeSymbol;
         TokenTypes = tokenTypes;
         _typesToTokenStrings = new(tokenTypes.ToDictionary(kvp => kvp.Value, kvp => kvp.Key));
+        Text = text;
     }
 
-    public Token Tokenize(string text)
+    public Token Tokenize()
     {
-        Token currentToken = new(TokenType.Main, []);
-        int basicTextStartIndex = 0, symbolIndex = 0;
-
-        for (; symbolIndex < text.Length; symbolIndex++)
+        int symbolIndex = 0;
+        for (; symbolIndex < Text.Length; symbolIndex++)
         {
-            if (GetTokenType(symbolIndex, text) is not TokenType tokenType
-                || (symbolIndex > 0 && text[symbolIndex - 1] == EscapeSymbol))
+            if (GetTokenType(symbolIndex, Text) is not TokenType tokenType
+                || (symbolIndex > 0 && Text[symbolIndex - 1] == EscapeSymbol))
                 continue;
 
-            if (symbolIndex != basicTextStartIndex)
-            {
-                string tokenText = RemoveEscapeSymbols(text[basicTextStartIndex..symbolIndex]);
-                currentToken.EmbedText(tokenText);
-            }
-
             var tokenString = _typesToTokenStrings[tokenType];
-            bool hasNoBoldWithinItalics = !(tokenType == TokenType.Bold && currentToken.Type == TokenType.Italics);
-            bool tokenizationRules = hasNoBoldWithinItalics;
-            // TODO: Переписать с ProcessToken
-            if (currentToken.Type == tokenType // Закрываем
-                && tokenizationRules)
-            {
-                if (char.IsSeparator(text[symbolIndex - 1]))
-                    continue;
-                var currentTokenText = text[basicTextStartIndex..symbolIndex];
-                currentToken = CloseTokenAndGetParent(currentTokenText, currentToken);
-            }
-            else if (currentToken.Type != tokenType // Открываем
-                && tokenizationRules)
-            {
-                if (symbolIndex + 1 < text.Length && char.IsSeparator(text[symbolIndex + 1]))
-                {
-                    currentToken.EmbeddedTokens.RemoveAt(currentToken.EmbeddedTokens.Count - 1); // когда может сломать все?
-                    continue;
-                }
-
-                _openTokens.Push(currentToken);
-                currentToken = new(tokenType, []);
-            }
-
-            basicTextStartIndex = symbolIndex + tokenString.Length;
-            symbolIndex += tokenString.Length - 1;
+            if (ProcessToken(tokenType, symbolIndex))
+                symbolIndex += tokenString.Length - 1;
         }
-        if (_openTokens.Count == 0 && symbolIndex != basicTextStartIndex)
+        if (_openTokens.Count == 0 && symbolIndex != _textStartIndex)
         {
-            string tokenText = RemoveEscapeSymbols(text[basicTextStartIndex..symbolIndex]);
-            currentToken.EmbedText(tokenText);
+            string tokenText = RemoveEscapeSymbols(Text[_textStartIndex..]);
+            _currentToken.EmbedText(tokenText);
         }
 
-        return currentToken;
+        return _currentToken;
     }
 
-    private Token CloseTokenAndGetParent(string tokenText, Token token)
+    private bool ProcessToken(TokenType tokenType, int tokenIndex)
     {
-        var tokenSymbol = _typesToTokenStrings[token.Type];
-        Token previouslyOpenedToken = _openTokens.Pop();
-        // Если нет ни одной буквы, то делаем токен обычным
-        if (tokenText.All(char.IsDigit))
+        // TODO Перенести в CheckIfTokenIsInvalid
+        bool hasNoBoldWithinItalics = !(tokenType == TokenType.Bold && _currentToken.Type == TokenType.Italics);
+        bool tokenizationRules = hasNoBoldWithinItalics;
+        var tokenString = _typesToTokenStrings[tokenType];
+
+        // Если токен не прошел одно из правил токенизации, оставляем его в виде обычного текста,
+        // для чего нужно вернуть из метода true.
+        bool processResult = true;
+        if (_currentToken.Type == tokenType
+            && tokenizationRules)
         {
-            token.Type = TokenType.Basic;
-            previouslyOpenedToken.EmbedText(tokenSymbol);
-            previouslyOpenedToken.EmbeddedTokens.Add(token);
-            previouslyOpenedToken.EmbedText(tokenSymbol);
+            processResult = CloseCurrentToken(tokenIndex);
+        }
+        else if (_currentToken.Type != tokenType
+            && tokenizationRules)
+        {
+            processResult = OpenNewToken(tokenType, tokenIndex, tokenString);
+        }
+        _textStartIndex = tokenIndex + tokenString.Length;
+
+        return processResult;
+    }
+
+    private bool OpenNewToken(TokenType tokenType, int tokenIndex, string tokenString)
+    {
+        if (tokenIndex + 1 < Text.Length && char.IsSeparator(Text[tokenIndex + 1]))
+            return false;
+        AddPreviousTextToTokenIfTokenIndexDiffersFromTextStartIndex(tokenIndex);
+        _openTokens.Push(_currentToken);
+        _currentToken = new(tokenType, [], isInWord: CheckIfTokenIsInWord(tokenIndex, tokenType));
+
+        return true;
+    }
+
+    // TODO укоротить название
+    private void AddPreviousTextToTokenIfTokenIndexDiffersFromTextStartIndex(int tokenIndex)
+    {
+        if (tokenIndex != _textStartIndex)
+        {
+            string tokenText = RemoveEscapeSymbols(Text[_textStartIndex..tokenIndex]);
+            _currentToken.EmbedText(tokenText);
+        }
+        //_textStartIndex = tokenIndex;
+    }
+
+    private bool CloseCurrentToken(int tokenIndex)
+    {
+        if (char.IsSeparator(Text[tokenIndex - 1]))
+            return false;
+
+        AddPreviousTextToTokenIfTokenIndexDiffersFromTextStartIndex(tokenIndex);
+
+        Token previouslyOpenedToken = _openTokens.Pop();
+        if (CheckIfTokenIsValid(tokenIndex, _currentToken))
+        {
+            previouslyOpenedToken.EmbeddedTokens.Add(_currentToken);
         }
         else
-            previouslyOpenedToken.EmbeddedTokens.Add(token);
+        {
+            RemoveTokenMarkdown(_currentToken, previouslyOpenedToken);
+        }
+        _currentToken = previouslyOpenedToken;
 
-        return previouslyOpenedToken;
+        return true;
+    }
+
+    private bool CheckIfTokenIsInWord(int tokenIndex, TokenType tokenType)
+    {
+        var tokenSymbol = _typesToTokenStrings[tokenType];
+        return tokenIndex - 1 > 0
+            && !char.IsSeparator(Text[tokenIndex - 1])
+            && tokenIndex + tokenSymbol.Length < Text.Length
+            && !char.IsSeparator(Text[tokenIndex + tokenSymbol.Length]);
+    }
+
+    private void RemoveTokenMarkdown(Token token, Token tokenParent)
+    {
+        var tokenSymbol = _typesToTokenStrings[token.Type];
+        token.Type = TokenType.Basic;
+        tokenParent.EmbedText(tokenSymbol);
+        tokenParent.EmbeddedTokens.Add(token);
+        tokenParent.EmbedText(tokenSymbol);
+    }
+
+    private bool CheckIfTokenIsValid(int tokenIndex, Token token)
+    {
+        var tokenText = Text[_textStartIndex..tokenIndex];
+        return !tokenText.All(char.IsDigit) && (!token.IsInWord || !tokenText.Any(char.IsSeparator));
     }
 
     private string RemoveEscapeSymbols(string text)
@@ -123,11 +164,6 @@ public class StringFormatter
         if (savedKey == null)
             return null;
         return TokenTypes[savedKey];
-    }
-
-    internal int FindPairSymbolIndex(int fromIndex, int symbolLength)
-    {
-        throw new NotImplementedException();
     }
 
     // Будет определять, что нужно использовать: ReplaceSingleSymbol или ReplacePairSymbols

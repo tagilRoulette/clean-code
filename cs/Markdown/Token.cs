@@ -2,13 +2,14 @@
 public class Token
 {
     public readonly IList<Token>? EmbeddedTokens;
-
     public TokenType Type;
+    public bool IsInWord;
 
-    public Token(TokenType tokenType, IList<Token>? embeddedTokens)
+    public Token(TokenType tokenType, IList<Token>? embeddedTokens, bool isInWord = false)
     {
         EmbeddedTokens = embeddedTokens;
         Type = tokenType;
+        IsInWord = isInWord;
     }
 
     public void EmbedText(string text)
