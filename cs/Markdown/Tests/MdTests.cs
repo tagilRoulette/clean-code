@@ -6,12 +6,13 @@ namespace Markdown.Tests;
 [TestFixture]
 public class ItalicsAndBoldMarkdownTest
 {
-    private static Dictionary<string, TokenType> TokensItalicsBold = new()
+    private static Dictionary<string, TokenType> TokensTask = new()
     {
         {"_", TokenType.Italics},
-        {"__", TokenType.Bold}
+        {"__", TokenType.Bold},
+        {"# ", TokenType.Header }
     };
-    private Func<EquivalencyOptions<Token>, EquivalencyOptions<Token>> _config =
+    private readonly Func<EquivalencyOptions<Token>, EquivalencyOptions<Token>> _config =
         config => config.Excluding(token =>
             token.DeclaringType == typeof(Token)
                 && token.Name == nameof(Token.IsInWord));
@@ -21,7 +22,7 @@ public class ItalicsAndBoldMarkdownTest
         var rawText = "Hello, _V_!";
         yield return (
             rawText,
-            TokensItalicsBold,
+            TokensTask,
             new(TokenType.Main,
             [
                 new BasicTextToken("Hello, "),
@@ -33,7 +34,7 @@ public class ItalicsAndBoldMarkdownTest
         rawText = "Hello, __Mister _V_!__";
         yield return (
             rawText,
-            TokensItalicsBold,
+            TokensTask,
             new(TokenType.Main,
                 [
                     new BasicTextToken("Hello, "),
@@ -47,7 +48,7 @@ public class ItalicsAndBoldMarkdownTest
                 ));
 
         rawText = "Hello, _Mister __V__!_";
-        yield return (rawText, TokensItalicsBold,
+        yield return (rawText, TokensTask,
             new Token(TokenType.Main,
                 [
                     new BasicTextToken("Hello, "),
@@ -58,12 +59,12 @@ public class ItalicsAndBoldMarkdownTest
                 ]
             ));
 
-        yield return ("_a_", TokensItalicsBold, new(TokenType.Main,
+        yield return ("_a_", TokensTask, new(TokenType.Main,
             [
                 new(TokenType.Italics, [new BasicTextToken("a")])
             ]));
 
-        yield return ("__a__", TokensItalicsBold, new(TokenType.Main,
+        yield return ("__a__", TokensTask, new(TokenType.Main,
             [
                 new(TokenType.Bold, [new BasicTextToken("a")])
             ]));
@@ -75,7 +76,7 @@ public class ItalicsAndBoldMarkdownTest
         Dictionary<string, TokenType> tokenTypes,
         Token expected) input)
     {
-        var formatter = new StringFormatter(input.text, input.tokenTypes);
+        var formatter = new TokenFactory(input.text, input.tokenTypes);
 
         var token = formatter.Tokenize();
 
@@ -94,9 +95,9 @@ public class ItalicsAndBoldMarkdownTest
                 ]
             );
 
-        StringFormatter stringFormatter = new(text, TokensItalicsBold);
+        TokenFactory tokenFactory = new(text, TokensTask);
 
-        var result = stringFormatter.Tokenize();
+        var result = tokenFactory.Tokenize();
 
         result.Should().BeEquivalentTo(expected, _config);
     }
@@ -112,9 +113,9 @@ public class ItalicsAndBoldMarkdownTest
             new BasicTextToken("_"),
             new BasicTextToken("3")
             ]);
-        StringFormatter stringFormatter = new(text, TokensItalicsBold);
+        TokenFactory tokenFactory = new(text, TokensTask);
 
-        var result = stringFormatter.Tokenize();
+        var result = tokenFactory.Tokenize();
 
         result.Should().BeEquivalentTo(expected, _config);
     }
@@ -131,9 +132,9 @@ public class ItalicsAndBoldMarkdownTest
             new BasicTextToken("не, и в кон"),
             new (TokenType.Italics, [new BasicTextToken("це.")]),
             ]);
-        StringFormatter stringFormatter = new(text, TokensItalicsBold);
+        TokenFactory tokenFactory = new(text, TokensTask);
 
-        var result = stringFormatter.Tokenize();
+        var result = tokenFactory.Tokenize();
 
         result.Should().BeEquivalentTo(expected, _config);
     }
@@ -143,9 +144,9 @@ public class ItalicsAndBoldMarkdownTest
     {
         string text = "ра_зных сл_овах";
         Token expected = new(TokenType.Main, [new BasicTextToken("ра"), new BasicTextToken("_"), new Token(TokenType.Basic, [new BasicTextToken("зных сл")]), new BasicTextToken("_"), new BasicTextToken("овах")]);
-        StringFormatter stringFormatter = new(text, TokensItalicsBold);
+        TokenFactory tokenFactory = new(text, TokensTask);
 
-        var result = stringFormatter.Tokenize();
+        var result = tokenFactory.Tokenize();
 
         result.Should().BeEquivalentTo(expected, _config);
     }
@@ -155,6 +156,9 @@ public class ItalicsAndBoldMarkdownTest
         string text;
 
         text = "эти_ подчерки_ ";
+        yield return (text, new(TokenType.Main, [new BasicTextToken(text)]));
+
+        text = "эти__ подчерки__ ";
         yield return (text, new(TokenType.Main, [new BasicTextToken(text)]));
 
         text = "_выдели_ эти_ подчерки_ ";
@@ -171,45 +175,83 @@ public class ItalicsAndBoldMarkdownTest
     [TestCaseSource(nameof(Source_ShouldNotMarkIfTokenWrapsWithWhitespace))]
     public void ShouldNotMarkIfTokenWrapsWithWhitespace((string text, Token expected) input)
     {
-        StringFormatter stringFormatter = new(input.text, TokensItalicsBold);
+        TokenFactory tokenFactory = new(input.text, TokensTask);
 
-        var result = stringFormatter.Tokenize();
+        var result = tokenFactory.Tokenize();
 
         result.Should().BeEquivalentTo(input.expected, _config);
     }
 
     public static IEnumerable<(string text, Token expected)> Source_ShouldNotTokenizeEmptyStrings()
     {
-        yield return ("__", new(TokenType.Main, [new BasicTextToken("_"), new(TokenType.Basic, []), new BasicTextToken("_")]));
+        yield return ("__", new(TokenType.Main, [new BasicTextToken("__"), new(TokenType.Basic, [])]));
         yield return ("____", new(TokenType.Main, [new BasicTextToken("__"), new(TokenType.Basic, []), new BasicTextToken("__")]));
+        yield return ("______", new(TokenType.Main,
+            [
+                new BasicTextToken("__"),
+                new(TokenType.Basic, []),
+                new BasicTextToken("__"),
+                new BasicTextToken("__"),
+                new(TokenType.Basic, []),
+            ]));
     }
 
     [TestCaseSource(nameof(Source_ShouldNotTokenizeEmptyStrings))]
     public void ShouldNotTokenizeEmptyStrings((string text, Token expected) input)
     {
-        StringFormatter stringFormatter = new(input.text, TokensItalicsBold);
+        TokenFactory tokenFactory = new(input.text, TokensTask);
 
-        var result = stringFormatter.Tokenize();
+        var result = tokenFactory.Tokenize();
 
         result.Should().BeEquivalentTo(input.expected);
     }
 
     public static IEnumerable<(string text, Token expected)> Source_ShouldTokenizeHeaderTagsCorrectly()
     {
-        yield return ("# Заголовок", 
+        yield return ("# Заголовок",
             new(TokenType.Main, [new(TokenType.Header, [new BasicTextToken("Заголовок")])]));
-        yield return ("# Заголовок __с _разными_ символами__", 
+        yield return ("# Заголовок _a",
             new(TokenType.Main, [new(TokenType.Header, [
-                new BasicTextToken("Заголовок ")]),
-                new Token(TokenType.Bold, 
+                new BasicTextToken("Заголовок"),
+                new BasicTextToken("_"),
+                new Token(TokenType.Basic, [new BasicTextToken("a")])
+                ])]));
+        yield return ("# Заголовок __с _разными_ символами__",
+            new(TokenType.Main, [new(TokenType.Header, [
+                new BasicTextToken("Заголовок "),
+                new Token(TokenType.Bold,
                     [new BasicTextToken("с "), new(TokenType.Italics, [new BasicTextToken("разными")]), new BasicTextToken(" символами")]
-                )
-            ]));
+                )])]));
+    }
+
+    [Test]
+    public void ShouldNotTokenizeUnfinishedTags()
+    {
+        var text = "__abcd _efgh";
+        TokenFactory tokenFactory = new(text, TokensTask);
+        Token expected = new(TokenType.Main, [
+            new BasicTextToken("__"),
+            new(TokenType.Basic, [
+                new BasicTextToken("abcd "),
+                new BasicTextToken("_"),
+                new(TokenType.Basic, [
+                    new BasicTextToken("efgh")
+                    ])
+                ])
+            ]);
+
+        var result = tokenFactory.Tokenize();
+
+        result.Should().BeEquivalentTo(expected);
     }
 
     [TestCaseSource(nameof(Source_ShouldTokenizeHeaderTagsCorrectly))]
     public void ShouldTokenizeHeaderTagsCorrectly((string text, Token expected) input)
     {
+        TokenFactory tokenFactory = new(input.text, TokensTask);
 
+        var result = tokenFactory.Tokenize();
+
+        result.Should().BeEquivalentTo(input.expected);
     }
 }

@@ -15,7 +15,7 @@ public class Token
     public void EmbedText(string text)
     {
         if (Type == TokenType.Basic)
-            throw new InvalidOperationException("Can't embed Text Token into Text Token.");
+            throw new InvalidOperationException("Can't embed _text Token into _text Token.");
         EmbeddedTokens.Add(new BasicTextToken(text));
     }
 }
