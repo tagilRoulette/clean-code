@@ -47,6 +47,7 @@ public class MdTests
     [TestCase("Hello, _Mister __V__!_", "Hello, <em>Mister __V__!</em>")]
     [TestCase("_a_", "<em>a</em>")]
     [TestCase("__a__", "<strong>a</strong>")]
+    [TestCase("___a___", "<strong><em>a</em></strong>")]
     public void ShouldTokenizeItalicsAndBoldCorrectly(string text, string expected)
     {
         var result = string.Format(_formatter, "{0}", text);
@@ -106,6 +107,7 @@ public class MdTests
     [TestCase("# Заголовок", "<h1>Заголовок</h1>")]
     [TestCase("# Заголовок __с _разными_ символами__", "<h1>Заголовок <strong>с <em>разными</em> символами</strong></h1>")]
     [TestCase("# Заголовок # не заголовок", "<h1>Заголовок # не заголовок</h1>")]
+    [TestCase("text # не заголовок", "text # не заголовок")]
     public void ShouldTokenizeUnpairableTagsCorrectly(string md, string expected)
     {
         var result = string.Format(_formatter, "{0}", md);
@@ -119,5 +121,21 @@ public class MdTests
         var result = string.Format(_formatter, "{0}", md);
 
         result.Should().Be(md);
+    }
+
+    [TestCase("# sword?\r\n__no__# need\r\n_ok_", "<h1>sword?</h1>\r\n<strong>no</strong># need\r\n<em>ok</em>")]
+    public void ShouldTokenizeLinesCorrectly(string md, string expected)
+    {
+        var result = string.Format(_formatter, "{0}", md);
+
+        result.Should().Be(expected);
+    }
+
+    [Test]
+    [Ignore("To be ignored until markdown '___' is recognized as 'closing italics' and 'closing bold'")]
+    public void PerformanceTest()
+    {
+        //var md = "# Around __the world__\r\n__around _the world___";
+        //var mdLines = string.Concat(Enumerable.Repeat())
     }
 }

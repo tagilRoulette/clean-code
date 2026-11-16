@@ -38,13 +38,12 @@ public class MdToHtmlFormatter : IFormatProvider, ICustomFormatter
         StringBuilder output = new();
         foreach (var line in text.LazySplit(['\r', '\n']))
         {
-            //var formattedString = _tokenFactory.Tokenize(line).ToString(GetReplacementSymbol);
             var token = _tokenFactory.Tokenize(line);
             (string openingTag, string closingTag) = GetReplacementSymbol(token.Type);
             var formattedString = token.ToString(GetReplacementSymbol);
-            output.Append(formattedString);
+            output.AppendLine(formattedString);
         }
-        return output.ToString();
+        return output.ToString().TrimEnd(['\r', '\n']);
     }
 
     private string HandleOtherFormats(string format, object arg)
