@@ -1,4 +1,6 @@
-﻿namespace Markdown;
+﻿using System.Text;
+
+namespace Markdown;
 public class Token
 {
     public readonly IList<Token>? EmbeddedTokens;
@@ -14,8 +16,23 @@ public class Token
 
     public void EmbedText(string text)
     {
-        if (Type == TokenType.Basic)
-            throw new InvalidOperationException("Can't embed _text Token into _text Token.");
+        if (GetType() == typeof(BasicTextToken))
+            throw new InvalidOperationException("Can't embed Text Token into Text Token.");
         EmbeddedTokens.Add(new BasicTextToken(text));
+    }
+
+    public virtual string ToString(Func<TokenType, (string openingSymbol, string closingSymbol)> formatter)
+    {
+        (string openingSymbol, string closingSymbol) = formatter(Type);
+        StringBuilder result = new();
+
+        result.Append(openingSymbol);
+        foreach (var childToken in EmbeddedTokens)
+        {
+            result.Append(childToken.ToString(formatter));
+        }
+        result.Append(closingSymbol);
+
+        return result.ToString();
     }
 }

@@ -1,22 +1,27 @@
-﻿namespace Markdown;
+﻿using Newtonsoft.Json.Linq;
+
+namespace Markdown;
 
 public class TokenFactory
 {
-    private string _text;
     public readonly Dictionary<string, TokenType> TokenTypes;
     private readonly Dictionary<TokenType, string> _typesToTokenStrings;
     public readonly char EscapeSymbol;
     private readonly Stack<Token> _openTokens = new();
     private Token _currentToken = new(TokenType.Main, [], isInWord: false);
     private int _textStartIndex = 0;
+    private string _text;
+    private readonly HashSet<TokenType> _unpairableTokens;
 
     public TokenFactory(
         Dictionary<string, TokenType> tokenTypes,
+        HashSet<TokenType> unpairableTokens,
         char escapeSymbol = '\\')
     {
         EscapeSymbol = escapeSymbol;
         TokenTypes = tokenTypes;
         _typesToTokenStrings = new(tokenTypes.ToDictionary(kvp => kvp.Value, kvp => kvp.Key));
+        _unpairableTokens = unpairableTokens;
     }
 
     public Token Tokenize(string text)
@@ -36,8 +41,8 @@ public class TokenFactory
                 continue;
 
             var tokenString = _typesToTokenStrings[tokenType];
-            if (ProcessToken(tokenType, symbolIndex))
-                symbolIndex += tokenString.Length - 1;
+            ProcessToken(tokenType, symbolIndex);
+            symbolIndex += tokenString.Length - 1;
         }
         AddPreviousTextToTokenIfAnyText(symbolIndex);
         FinalizeOpenTokens();
@@ -50,8 +55,8 @@ public class TokenFactory
         while (_openTokens.Count > 0)
         {
             Token tokenParent = _openTokens.Pop();
-            if (_currentToken.Type == TokenType.Header)
-                CloseHeaderToken(tokenParent);
+            if (_unpairableTokens.Contains(_currentToken.Type))
+                CloseUnpairableToken(tokenParent);
             else RemoveTokenMarkdown(
                     _currentToken,
                     tokenParent: tokenParent,
@@ -60,48 +65,58 @@ public class TokenFactory
         }
     }
 
-    private void CloseHeaderToken(Token tokenParent)
+    private void CloseUnpairableToken(Token tokenParent)
     {
         tokenParent.EmbeddedTokens.Add(_currentToken);
     }
 
     private bool ProcessToken(TokenType tokenType, int tokenIndex)
     {
-        // TODO Перенести в CheckIfTokenIsInvalid
-        bool hasNoBoldWithinItalics = !(tokenType == TokenType.Bold && _currentToken.Type == TokenType.Italics);
-
-        // Если токен не прошел одно из правил токенизации, оставляем его в виде обычного текста,
-        // для чего нужно вернуть из метода true.
-        bool processResult = true;
-        if (_currentToken.Type == tokenType
-            && hasNoBoldWithinItalics)
+        if (_currentToken.Type == tokenType && ValidateClosingToken(tokenIndex))
         {
-            processResult = CloseCurrentToken(tokenIndex);
+            CloseCurrentToken(tokenIndex);
         }
-        else if (_currentToken.Type != tokenType
-            && hasNoBoldWithinItalics)
+        else if (_currentToken.Type != tokenType && ValidateOpeningToken(tokenType, tokenIndex))
         {
-            processResult = OpenNewToken(tokenType, tokenIndex);
+            OpenNewToken(tokenType, tokenIndex);
         }
+        else return false;
         _textStartIndex = tokenIndex + _typesToTokenStrings[tokenType].Length;
 
-        return processResult;
+        return true;
     }
 
-    private bool OpenNewToken(TokenType tokenType, int tokenIndex)
+    private void OpenNewToken(TokenType tokenType, int tokenIndex)
     {
-        var tokenSymbolLength = _typesToTokenStrings[tokenType].Length;
-        if (tokenType != TokenType.Header
-            && tokenIndex + tokenSymbolLength < _text.Length
-            && char.IsSeparator(_text[tokenIndex + tokenSymbolLength]))
-            return false;
-        if (tokenType == TokenType.Header
-            && _currentToken.Type != TokenType.Main)
-            return false;
-
         AddPreviousTextToTokenIfAnyText(tokenIndex);
         _openTokens.Push(_currentToken);
         _currentToken = new(tokenType, [], isInWord: CheckIfTokenIsInWord(tokenIndex, tokenType));
+    }
+
+    private bool ValidateOpeningToken(TokenType tokenType, int tokenIndex)
+    {
+        // todo
+        if (_openTokens.Count > 0
+            && _openTokens.Peek().Type == tokenType)
+        {
+            RemoveTokenMarkdown(_currentToken, _openTokens.Peek(), isTokenComplete: false);
+            return false;
+        }
+        var tokenSymbolLength = _typesToTokenStrings[tokenType].Length;
+        bool isPairableTokenContinuedBySeparator = !_unpairableTokens.Contains(tokenType)
+            && tokenIndex + tokenSymbolLength < _text.Length
+            && char.IsSeparator(_text[tokenIndex + tokenSymbolLength]);
+        if (isPairableTokenContinuedBySeparator)
+            return false;
+
+        bool isUnpairableTokenInsideAnotherToken = _unpairableTokens.Contains(tokenType)
+            && _currentToken.Type != TokenType.Main;
+        if (isUnpairableTokenInsideAnotherToken)
+            return false;
+
+        // no bold tokens inside italics tokens
+        if (_currentToken.Type == TokenType.Italics && tokenType == TokenType.Bold)
+            return false;
 
         return true;
     }
@@ -113,15 +128,16 @@ public class TokenFactory
         _currentToken.EmbedText(tokenText.RemoveEscapeSymbols(EscapeSymbol));
     }
 
-    private bool CloseCurrentToken(int tokenIndex)
+    private void CloseCurrentToken(int tokenIndex)
     {
-        if (tokenIndex - 1 > 0 && char.IsSeparator(_text[tokenIndex - 1]))
-            return false;
-
         AddPreviousTextToTokenIfAnyText(tokenIndex);
 
         Token previouslyOpenedToken = _openTokens.Pop();
-        if (CheckIfTokenIsValid(tokenIndex, _currentToken))
+
+        var tokenText = _text[_textStartIndex..tokenIndex];
+        if (tokenIndex > _textStartIndex
+            && !tokenText.All(char.IsDigit)
+            && (!_currentToken.IsInWord || !tokenText.Any(char.IsSeparator)))
         {
             previouslyOpenedToken.EmbeddedTokens.Add(_currentToken);
         }
@@ -129,11 +145,13 @@ public class TokenFactory
         {
             var textDidNotEndAndTokenIsComplete = tokenIndex < _text.Length;
             RemoveTokenMarkdown(_currentToken, previouslyOpenedToken, textDidNotEndAndTokenIsComplete);
-            //RemoveTokenMarkdown(_currentToken, previouslyOpenedToken, true);
         }
         _currentToken = previouslyOpenedToken;
+    }
 
-        return true;
+    private bool ValidateClosingToken(int tokenIndex)
+    {
+        return tokenIndex - 1 <= 0 || !char.IsSeparator(_text[tokenIndex - 1]);
     }
 
     private bool CheckIfTokenIsInWord(int tokenIndex, TokenType tokenType)
@@ -156,13 +174,6 @@ public class TokenFactory
         if (!isTokenComplete) return;
 
         tokenParent.EmbedText(tokenSymbol);
-    }
-
-    private bool CheckIfTokenIsValid(int tokenIndex, Token token)
-    {
-        if (tokenIndex <= _textStartIndex) return false;
-        var tokenText = _text[_textStartIndex..tokenIndex];
-        return !tokenText.All(char.IsDigit) && (!token.IsInWord || !tokenText.Any(char.IsSeparator));
     }
 
     private TokenType? GetTokenType(int symbolIndex)

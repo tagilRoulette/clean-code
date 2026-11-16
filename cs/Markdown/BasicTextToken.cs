@@ -8,4 +8,9 @@ internal class BasicTextToken : Token
     {
         Text = text;
     }
+
+    public override string ToString(Func<TokenType, (string openingSymbol, string closingSymbol)> formatter)
+    {
+        return Text;
+    }
 }
