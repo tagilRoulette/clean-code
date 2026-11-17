@@ -1,4 +1,6 @@
-﻿using Newtonsoft.Json.Linq;
+﻿using System.Collections.Generic;
+using System.Data.SqlTypes;
+using Newtonsoft.Json.Linq;
 
 namespace Markdown;
 
@@ -8,7 +10,8 @@ public class TokenFactory
     private readonly Dictionary<TokenType, string> _typesToTokenStrings;
     public readonly char EscapeSymbol;
     private readonly Stack<Token> _openTokens = new();
-    private Token _currentToken = new(TokenType.Main, [], isInWord: false);
+    private readonly HashSet<TokenType> _openTokenTypes = new();
+    private Token _currentToken;
     private int _textStartIndex = 0;
     private string _text;
     private readonly HashSet<TokenType> _unpairableTokens;
@@ -21,13 +24,16 @@ public class TokenFactory
         EscapeSymbol = escapeSymbol;
         TokenTypes = tokenTypes;
         _typesToTokenStrings = new(tokenTypes.ToDictionary(kvp => kvp.Value, kvp => kvp.Key));
+        unpairableTokens.Add(TokenType.Main);
         _unpairableTokens = unpairableTokens;
     }
 
     public Token Tokenize(string text)
     {
+        _openTokenTypes.Clear();
         _text = text;
         _textStartIndex = 0;
+        _currentToken = new(TokenType.Main, [], isInWord: false);
         return Tokenize();
     }
 
@@ -36,7 +42,8 @@ public class TokenFactory
         int symbolIndex = 0;
         for (; symbolIndex < _text.Length; symbolIndex++)
         {
-            if (GetTokenType(symbolIndex) is not TokenType tokenType
+            TokenType tokenType = GetTokenType(symbolIndex);
+            if (tokenType == TokenType.None
                 || (symbolIndex > 0 && _text[symbolIndex - 1] == EscapeSymbol))
                 continue;
 
@@ -90,18 +97,12 @@ public class TokenFactory
     {
         AddPreviousTextToTokenIfAnyText(tokenIndex);
         _openTokens.Push(_currentToken);
+        _openTokenTypes.Add(_currentToken.Type);
         _currentToken = new(tokenType, [], isInWord: CheckIfTokenIsInWord(tokenIndex, tokenType));
     }
 
     private bool ValidateOpeningToken(TokenType tokenType, int tokenIndex)
     {
-        // todo
-        if (_openTokens.Count > 0
-            && _openTokens.Peek().Type == tokenType)
-        {
-            RemoveTokenMarkdown(_currentToken, _openTokens.Peek(), isTokenComplete: false);
-            return false;
-        }
         var tokenSymbolLength = _typesToTokenStrings[tokenType].Length;
         bool isPairableTokenContinuedBySeparator = !_unpairableTokens.Contains(tokenType)
             && tokenIndex + tokenSymbolLength < _text.Length
@@ -109,9 +110,9 @@ public class TokenFactory
         if (isPairableTokenContinuedBySeparator)
             return false;
 
-        bool isUnpairableTokenInsideAnotherToken = _unpairableTokens.Contains(tokenType)
-            && _currentToken.Type != TokenType.Main;
-        if (isUnpairableTokenInsideAnotherToken)
+        bool isUnpairableTokenNotAtLineStart = _unpairableTokens.Contains(tokenType)
+            && tokenIndex != 0;
+        if (isUnpairableTokenNotAtLineStart)
             return false;
 
         // no bold tokens inside italics tokens
@@ -133,10 +134,12 @@ public class TokenFactory
         AddPreviousTextToTokenIfAnyText(tokenIndex);
 
         Token previouslyOpenedToken = _openTokens.Pop();
+        _openTokenTypes.Remove(previouslyOpenedToken.Type);
 
         var tokenText = _text[_textStartIndex..tokenIndex];
-        if (tokenIndex > _textStartIndex
-            && !tokenText.All(char.IsDigit)
+        bool hasUntokenizedNonNumericSymbols = tokenText.Length > 0
+            && !tokenText.All(char.IsDigit);
+        if ((hasUntokenizedNonNumericSymbols || _currentToken.HasTokenizedNonNumericSymbols)
             && (!_currentToken.IsInWord || !tokenText.Any(char.IsSeparator)))
         {
             previouslyOpenedToken.EmbeddedTokens.Add(_currentToken);
@@ -151,6 +154,18 @@ public class TokenFactory
 
     private bool ValidateClosingToken(int tokenIndex)
     {
+        var didRemove = false;
+        var typeToRemove = _openTokens.Peek().Type;
+        if (_openTokens.Count > 1)
+            _openTokenTypes.Remove(_openTokens.Peek().Type);
+        if (tokenIndex + 1 < _text.Length
+            && GetTokenType(tokenIndex + 1) == _currentToken.Type)
+        {
+            RemoveTokenMarkdown(_currentToken, _openTokens.Peek(), isTokenComplete: false);
+            return false;
+        }
+        if (didRemove)
+            _openTokenTypes.Add(typeToRemove);
         return tokenIndex - 1 <= 0 || !char.IsSeparator(_text[tokenIndex - 1]);
     }
 
@@ -176,53 +191,36 @@ public class TokenFactory
         tokenParent.EmbedText(tokenSymbol);
     }
 
-    private TokenType? GetTokenType(int symbolIndex)
+    private TokenType GetTokenType(int symbolIndex)
     {
-        var additionalTokenLength = 0;
-        string? savedKey = null;
-        while (symbolIndex + additionalTokenLength < _text.Length)
+        List<TokenType> candidates = GetTokenCandidates(symbolIndex);
+        if (candidates.Count == 0)
+            return TokenType.None;
+        var candidatesOrdered = candidates.OrderBy(type => _typesToTokenStrings[type].Length).ToList();
+        // if in Main, Header or any other unpairable token
+        if (_unpairableTokens.Contains(_currentToken.Type))
+            return candidatesOrdered[^1];
+        for (int candidateReverseIndex = 1; candidateReverseIndex <= candidatesOrdered.Count; candidateReverseIndex++)
         {
-            var symbol = _text.Substring(symbolIndex, 1 + additionalTokenLength);
-            bool keySubstrIsInAnyReplacementDict =
-                TokenTypes.Keys.Any(key => key.StartsWith(symbol));
-
-            if (keySubstrIsInAnyReplacementDict)
-            {
-                savedKey = symbol;
-                additionalTokenLength++;
-            }
-            else break;
+            if (!_openTokenTypes.Contains(candidatesOrdered[^candidateReverseIndex]))
+                return candidatesOrdered[^candidateReverseIndex];
         }
-        if (savedKey == null)
-            return null;
-        return TokenTypes[savedKey];
+        return candidatesOrdered[0];
     }
 
-    // Будет определять, что нужно использовать: ReplaceSingleSymbol или ReplacePairSymbols
-    internal void ReplaceSymbols(int fromIndex, int toIndex, int symbolLength)
+    private List<TokenType> GetTokenCandidates(int symbolIndex)
     {
-        throw new NotImplementedException();
+        List<TokenType> result = new();
+        for (int length = 0; symbolIndex + length < _text.Length; length++)
+        {
+            var symbol = _text.Substring(symbolIndex, 1 + length);
 
-    }
+            if (TokenTypes.TryGetValue(symbol, out TokenType type))
+                result.Add(type);
 
-    internal void ReplaceSingleSymbol(int fromIndex, int toIndex, int symbolLength)
-    {
-        throw new NotImplementedException();
-        //string toReplace = Text.ToString(fromIndex, symbolLength);
-        //SingleReplacements.TryGetValue(toReplace, out var replacement);
-        //if (replacement == null)
-        //    throw new KeyNotFoundException("Symbol does not have a replacement.");
-
-        //Text.Remove(fromIndex, symbolLength);
-        //Text.Insert(fromIndex, replacement);
-
-        //string closingTag = replacement.Insert(1, "/");
-        //Text.Insert(toIndex, closingTag);
-    }
-
-    internal void ReplacePairSymbols(int fromIndex, int toIndex, int symbolLength)
-    {
-        throw new NotImplementedException();
-
+            if (!TokenTypes.Keys.Any(key => key.StartsWith(symbol)))
+                break;
+        }
+        return result;
     }
 }

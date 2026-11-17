@@ -7,6 +7,8 @@ public class Token
     public TokenType Type;
     public bool IsInWord;
 
+    public virtual bool HasTokenizedNonNumericSymbols => EmbeddedTokens.Any(t => t.HasTokenizedNonNumericSymbols);
+
     public Token(TokenType tokenType, IList<Token>? embeddedTokens, bool isInWord = false)
     {
         EmbeddedTokens = embeddedTokens;
