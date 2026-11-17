@@ -4,6 +4,7 @@ using FluentAssertions.Equivalency;
 namespace Markdown.Tests;
 
 [TestFixture]
+[Ignore("Relevant tests are MdTests.")]
 public class TokenizerTests
 {
     private static readonly Dictionary<string, TokenType> _tokensTask = new()

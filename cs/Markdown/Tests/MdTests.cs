@@ -1,5 +1,4 @@
 ﻿using FluentAssertions;
-using static System.Net.Mime.MediaTypeNames;
 
 namespace Markdown.Tests;
 
@@ -108,6 +107,7 @@ public class MdTests
     [TestCase("# Заголовок __с _разными_ символами__", "<h1>Заголовок <strong>с <em>разными</em> символами</strong></h1>")]
     [TestCase("# Заголовок # не заголовок", "<h1>Заголовок # не заголовок</h1>")]
     [TestCase("text # не заголовок", "text # не заголовок")]
+    [TestCase("# Around __the world__\r\n__around _the world___\r\n", "<h1>Around <strong>the world</strong></h1>\r\n<strong>around <em>the world</em></strong>")]
     public void ShouldTokenizeUnpairableTagsCorrectly(string md, string expected)
     {
         var result = string.Format(_formatter, "{0}", md);
@@ -132,10 +132,16 @@ public class MdTests
     }
 
     [Test]
-    [Ignore("To be ignored until markdown '___' is recognized as 'closing italics' and 'closing bold'")]
     public void PerformanceTest()
     {
-        //var md = "# Around __the world__\r\n__around _the world___";
-        //var mdLines = string.Concat(Enumerable.Repeat())
+
+        var md = "# Around __the world__\r\n__around _the world___\r\n";
+        var mdLines = string.Concat(Enumerable.Repeat(md, 72 * 72 * 72)).Trim();
+        var expected = "<h1>Around <strong>the world</strong></h1>\r\n<strong>around <em>the world</em></strong>\r\n";
+        var expectedLines = string.Concat(Enumerable.Repeat(expected, 72 * 72 * 72)).Trim();
+
+        var result = string.Format(_formatter, "{0}", mdLines);
+
+        result.Should().Be(expectedLines);
     }
 }

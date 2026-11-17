@@ -1,4 +1,5 @@
-﻿using System.Data.SqlTypes;
+﻿using System.Collections.Generic;
+using System.Data.SqlTypes;
 using Newtonsoft.Json.Linq;
 
 namespace Markdown;
@@ -9,6 +10,7 @@ public class TokenFactory
     private readonly Dictionary<TokenType, string> _typesToTokenStrings;
     public readonly char EscapeSymbol;
     private readonly Stack<Token> _openTokens = new();
+    private readonly HashSet<TokenType> _openTokenTypes = new();
     private Token _currentToken;
     private int _textStartIndex = 0;
     private string _text;
@@ -28,6 +30,7 @@ public class TokenFactory
 
     public Token Tokenize(string text)
     {
+        _openTokenTypes.Clear();
         _text = text;
         _textStartIndex = 0;
         _currentToken = new(TokenType.Main, [], isInWord: false);
@@ -94,18 +97,12 @@ public class TokenFactory
     {
         AddPreviousTextToTokenIfAnyText(tokenIndex);
         _openTokens.Push(_currentToken);
+        _openTokenTypes.Add(_currentToken.Type);
         _currentToken = new(tokenType, [], isInWord: CheckIfTokenIsInWord(tokenIndex, tokenType));
     }
 
     private bool ValidateOpeningToken(TokenType tokenType, int tokenIndex)
     {
-        // todo
-        if (_openTokens.Count > 0
-            && _openTokens.Peek().Type == tokenType)
-        {
-            RemoveTokenMarkdown(_currentToken, _openTokens.Peek(), isTokenComplete: false);
-            return false;
-        }
         var tokenSymbolLength = _typesToTokenStrings[tokenType].Length;
         bool isPairableTokenContinuedBySeparator = !_unpairableTokens.Contains(tokenType)
             && tokenIndex + tokenSymbolLength < _text.Length
@@ -137,12 +134,12 @@ public class TokenFactory
         AddPreviousTextToTokenIfAnyText(tokenIndex);
 
         Token previouslyOpenedToken = _openTokens.Pop();
+        _openTokenTypes.Remove(previouslyOpenedToken.Type);
 
         var tokenText = _text[_textStartIndex..tokenIndex];
-        //if (tokenIndex > _textStartIndex
-        //    && !tokenText.All(char.IsDigit)
-        if (tokenText.Length > 0 // ^^ _currentToken.EmbeddedTokens.Count > 0 ||
-            && !tokenText.All(char.IsDigit)
+        bool hasUntokenizedNonNumericSymbols = tokenText.Length > 0
+            && !tokenText.All(char.IsDigit);
+        if ((hasUntokenizedNonNumericSymbols || _currentToken.HasTokenizedNonNumericSymbols)
             && (!_currentToken.IsInWord || !tokenText.Any(char.IsSeparator)))
         {
             previouslyOpenedToken.EmbeddedTokens.Add(_currentToken);
@@ -157,6 +154,18 @@ public class TokenFactory
 
     private bool ValidateClosingToken(int tokenIndex)
     {
+        var didRemove = false;
+        var typeToRemove = _openTokens.Peek().Type;
+        if (_openTokens.Count > 1)
+            _openTokenTypes.Remove(_openTokens.Peek().Type);
+        if (tokenIndex + 1 < _text.Length
+            && GetTokenType(tokenIndex + 1) == _currentToken.Type)
+        {
+            RemoveTokenMarkdown(_currentToken, _openTokens.Peek(), isTokenComplete: false);
+            return false;
+        }
+        if (didRemove)
+            _openTokenTypes.Add(typeToRemove);
         return tokenIndex - 1 <= 0 || !char.IsSeparator(_text[tokenIndex - 1]);
     }
 
@@ -184,32 +193,34 @@ public class TokenFactory
 
     private TokenType GetTokenType(int symbolIndex)
     {
-        List<TokenType> candidates = new();
+        List<TokenType> candidates = GetTokenCandidates(symbolIndex);
+        if (candidates.Count == 0)
+            return TokenType.None;
+        var candidatesOrdered = candidates.OrderBy(type => _typesToTokenStrings[type].Length).ToList();
+        // if in Main, Header or any other unpairable token
+        if (_unpairableTokens.Contains(_currentToken.Type))
+            return candidatesOrdered[^1];
+        for (int candidateReverseIndex = 1; candidateReverseIndex <= candidatesOrdered.Count; candidateReverseIndex++)
+        {
+            if (!_openTokenTypes.Contains(candidatesOrdered[^candidateReverseIndex]))
+                return candidatesOrdered[^candidateReverseIndex];
+        }
+        return candidatesOrdered[0];
+    }
+
+    private List<TokenType> GetTokenCandidates(int symbolIndex)
+    {
+        List<TokenType> result = new();
         for (int length = 0; symbolIndex + length < _text.Length; length++)
         {
             var symbol = _text.Substring(symbolIndex, 1 + length);
 
             if (TokenTypes.TryGetValue(symbol, out TokenType type))
-                candidates.Add(type);
+                result.Add(type);
 
             if (!TokenTypes.Keys.Any(key => key.StartsWith(symbol)))
                 break;
-            //if (!_unpairableTokens.Contains(_currentToken.Type)
-            //    && TokenTypes.TryGetValue(symbol, out TokenType tokenType)
-            //    && tokenType == _currentToken.Type)
-            //    return tokenType;
         }
-        if (candidates.Count == 0)
-            return TokenType.None;
-        var candidatesOrdered = candidates.OrderBy(type => _typesToTokenStrings[type].Length).ToList();
-        if (_openTokens.TryPeek(out var token)
-            && token.Type != TokenType.Bold
-            && _currentToken.Type == TokenType.Italics) 
-            return candidatesOrdered[^1];
-        // if not in Main, Header or any other unpairable token
-        if (_unpairableTokens.Contains(_currentToken.Type)
-            || candidatesOrdered[^1] == _currentToken.Type)
-            return candidatesOrdered[^1];
-        return candidatesOrdered[0];
+        return result;
     }
 }
